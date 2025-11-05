@@ -199,8 +199,7 @@ class solver_GP(object):
         err_contourf=ax.contourf(XX, YY, self.test_err_all.reshape(XX.shape), 50, cmap=plt.cm.coolwarm)
         self.XX = XX
         self.YY = YY
-        plt.xlabel('$x_1$')
-        plt.ylabel('$x_2$')
-        plt.title('Contour of errors')
+        # plt.xlabel('$x_1$')
+        # plt.ylabel('$x_2$')
+        # plt.title('Contour of errors')
         fig.colorbar(err_contourf, format=fmt)
-        plt.show()

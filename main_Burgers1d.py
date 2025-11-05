@@ -12,6 +12,7 @@ import numpy as onp
 from numpy import random
 # solver
 from src.solver import solver_GP
+import matplotlib.pyplot as plt
 
 # solving Burgers: u_t+ alpha u u_x- nu u_xx=0
 def get_parser():
@@ -102,3 +103,6 @@ solver.test(X_test)
 solver.get_test_error(test_truth)
 if cfg. show_figure:
     solver.contour_of_test_err(XX,YY)
+
+if cfg. show_figure:
+    plt.show()
