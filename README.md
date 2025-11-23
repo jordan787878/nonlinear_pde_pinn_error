@@ -43,3 +43,7 @@ In addition, folder `reference_solver` contains several classical solvers for th
   publisher={Elsevier}
 }
 ```
+
+### Learning Error 
+- To train the sol & error networks for Burger PDE: python main_Burgers1d_error.py --save_uhat trained_models/uhat.npz --save_ehat trained_models/ehat.npz
+- To see the results with pre-trained models: python main_Burgers1d_error.py --load_uhat trained_models/uhat.npz --load_ehat trained_models/ehat.npz

@@ -287,3 +287,210 @@ def construct_Theta_test(X_test, X_domain, X_boundary, eqn = 'Nonlinear_elliptic
         val = vmap(lambda x1,x2,y1,y2: K.kappa(x1, x2, y1, y2, kernel_parameter))(XXtdb0.flatten(),XXtdb1.flatten(),XXtdb0_2.flatten(),XXtdb1_2.flatten())
         Theta_u_test[:,3*N_domain:] = onp.reshape(val, (N_test, N_domain+N_boundary))
         return Theta_u_test, Theta_a_test
+    
+
+# ------------------------------------------------------------
+# Extra helper for Burgers derivatives at test points
+# ------------------------------------------------------------
+import jax
+from jax import grad
+
+def construct_Theta_test_Burgers(
+    X_test,
+    X_domain,
+    X_boundary,
+    kernel="anisotropic_Gaussian",
+    kernel_parameter=[1/3, 1/20],
+    which="u",  # one of: "u", "ut", "ux", "uxx"
+):
+    """
+    Cross-cov between a test quantity and the Burgers training stack.
+
+    Training stack order (same as Gram_matrix_assembly for eqn='Burgers'):
+        [ ut(dom), ux(dom), uxx(dom), u(dom), u(bdy) ].
+
+    Args:
+        which:
+            "u"   -> cov( u(test),   stack )
+            "ut"  -> cov( u_t(test), stack )
+            "ux"  -> cov( u_x(test), stack )
+            "uxx" -> cov( u_xx(test),stack )
+
+    Returns:
+        Theta_test: (N_test, 4*N_domain + N_boundary)
+    """
+
+    N_test = X_test.shape[0]
+    N_domain = X_domain.shape[0]
+    N_boundary = X_boundary.shape[0]
+
+    # X_test coords
+    Xt0 = X_test[:, 0]  # t
+    Xt1 = X_test[:, 1]  # x
+
+    # domain coords
+    Xd0 = X_domain[:, 0]
+    Xd1 = X_domain[:, 1]
+
+    # domain + boundary coords
+    Xdb0 = jnp.concatenate([Xd0, X_boundary[:, 0]])
+    Xdb1 = jnp.concatenate([Xd1, X_boundary[:, 1]])
+
+    # test vs domain tiling
+    XXtd0   = jnp.transpose(jnp.tile(Xt0, (N_domain, 1)))
+    XXtd1   = jnp.transpose(jnp.tile(Xt1, (N_domain, 1)))
+    XXtd0_2 = jnp.tile(Xd0, (N_test, 1))
+    XXtd1_2 = jnp.tile(Xd1, (N_test, 1))
+
+    # test vs (domain+boundary) tiling
+    XXtdb0   = jnp.transpose(jnp.tile(Xt0, (N_domain + N_boundary, 1)))
+    XXtdb1   = jnp.transpose(jnp.tile(Xt1, (N_domain + N_boundary, 1)))
+    XXtdb0_2 = jnp.tile(Xdb0, (N_test, 1))
+    XXtdb1_2 = jnp.tile(Xdb1, (N_test, 1))
+
+    # kernel object
+    if kernel == "Gaussian":
+        K = Gaussian_kernel()
+    elif kernel == "anisotropic_Gaussian":
+        K = Anisotropic_Gaussian_kernel()
+    else:
+        raise ValueError(f"Unknown kernel: {kernel}")
+
+    sig = kernel_parameter
+
+    # --------------------------------------------------------
+    # Build the four blocks vs domain:
+    #   block_ut  : cov(test_quantity, ut(dom))   (N_test, N_dom)
+    #   block_ux  : cov(test_quantity, ux(dom))   (N_test, N_dom)
+    #   block_uxx : cov(test_quantity, uxx(dom))  (N_test, N_dom)
+    #   block_u   : cov(test_quantity, u(dom))    (N_test, N_dom)
+    #
+    # and one block vs boundary:
+    #   block_bdy : cov(test_quantity, u(bdy))    (N_test, N_bdy)
+    # --------------------------------------------------------
+
+    if which == "u":
+        # matches existing construct_Theta_test(..., eqn="Burgers")
+        val_ut = vmap(lambda x1, x2, y1, y2: K.D_y1_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ut = jnp.reshape(val_ut, (N_test, N_domain))
+
+        val_ux = vmap(lambda x1, x2, y1, y2: K.D_y2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ux = jnp.reshape(val_ux, (N_test, N_domain))
+
+        val_uxx = vmap(lambda x1, x2, y1, y2: K.DD_y2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_uxx = jnp.reshape(val_uxx, (N_test, N_domain))
+
+        val_u = vmap(lambda x1, x2, y1, y2: K.kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_u = jnp.reshape(val_u, (N_test, N_domain))
+
+        val_bdy = vmap(lambda x1, x2, y1, y2: K.kappa(x1, x2, y1, y2, sig))(
+            XXtdb0.flatten(), XXtdb1.flatten(), XXtdb0_2.flatten(), XXtdb1_2.flatten()
+        )
+        block_bdy = jnp.reshape(val_bdy, (N_test, N_domain + N_boundary))[:, N_domain:]
+
+
+    elif which == "ut":
+        # test ut vs domain stack
+        val_ut = vmap(lambda x1, x2, y1, y2: K.D_x1_D_y1_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ut = jnp.reshape(val_ut, (N_test, N_domain))
+
+        val_ux = vmap(lambda x1, x2, y1, y2: K.D_x1_D_y2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ux = jnp.reshape(val_ux, (N_test, N_domain))
+
+        val_uxx = vmap(lambda x1, x2, y1, y2: K.D_x1_DD_y2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_uxx = jnp.reshape(val_uxx, (N_test, N_domain))
+
+        val_u = vmap(lambda x1, x2, y1, y2: K.D_x1_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_u = jnp.reshape(val_u, (N_test, N_domain))
+
+        val_bdy = vmap(lambda x1, x2, y1, y2: K.D_x1_kappa(x1, x2, y1, y2, sig))(
+            XXtdb0.flatten(), XXtdb1.flatten(), XXtdb0_2.flatten(), XXtdb1_2.flatten()
+        )
+        block_bdy = jnp.reshape(val_bdy, (N_test, N_domain + N_boundary))[:, N_domain:]
+
+
+    elif which == "ux":
+        # test ux vs domain stack
+        val_ut = vmap(lambda x1, x2, y1, y2: K.D_x2_D_y1_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ut = jnp.reshape(val_ut, (N_test, N_domain))
+
+        val_ux = vmap(lambda x1, x2, y1, y2: K.D_x2_D_y2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ux = jnp.reshape(val_ux, (N_test, N_domain))
+
+        val_uxx = vmap(lambda x1, x2, y1, y2: K.D_x2_DD_y2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_uxx = jnp.reshape(val_uxx, (N_test, N_domain))
+
+        val_u = vmap(lambda x1, x2, y1, y2: K.D_x2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_u = jnp.reshape(val_u, (N_test, N_domain))
+
+        val_bdy = vmap(lambda x1, x2, y1, y2: K.D_x2_kappa(x1, x2, y1, y2, sig))(
+            XXtdb0.flatten(), XXtdb1.flatten(), XXtdb0_2.flatten(), XXtdb1_2.flatten()
+        )
+        block_bdy = jnp.reshape(val_bdy, (N_test, N_domain + N_boundary))[:, N_domain:]
+
+
+    elif which == "uxx":
+        # We need mixed 2nd derivatives wrt test-x,
+        # which aren't defined in kernels, so we take grad() on existing ones.
+        def DD_x2_D_y1(x1, x2, y1, y2, sigma):
+            return grad(K.D_x2_D_y1_kappa, 1)(x1, x2, y1, y2, sigma)
+
+        def DD_x2_D_y2(x1, x2, y1, y2, sigma):
+            return grad(K.D_x2_D_y2_kappa, 1)(x1, x2, y1, y2, sigma)
+
+        val_ut = vmap(lambda x1, x2, y1, y2: DD_x2_D_y1(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ut = jnp.reshape(val_ut, (N_test, N_domain))
+
+        val_ux = vmap(lambda x1, x2, y1, y2: DD_x2_D_y2(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_ux = jnp.reshape(val_ux, (N_test, N_domain))
+
+        val_uxx = vmap(lambda x1, x2, y1, y2: K.DD_x2_DD_y2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_uxx = jnp.reshape(val_uxx, (N_test, N_domain))
+
+        val_u = vmap(lambda x1, x2, y1, y2: K.DD_x2_kappa(x1, x2, y1, y2, sig))(
+            XXtd0.flatten(), XXtd1.flatten(), XXtd0_2.flatten(), XXtd1_2.flatten()
+        )
+        block_u = jnp.reshape(val_u, (N_test, N_domain))
+
+        val_bdy = vmap(lambda x1, x2, y1, y2: K.DD_x2_kappa(x1, x2, y1, y2, sig))(
+            XXtdb0.flatten(), XXtdb1.flatten(), XXtdb0_2.flatten(), XXtdb1_2.flatten()
+        )
+        block_bdy = jnp.reshape(val_bdy, (N_test, N_domain + N_boundary))[:, N_domain:]
+
+
+    else:
+        raise ValueError("which must be one of: 'u','ut','ux','uxx'")
+
+    # concatenate in the Burgers training order
+    Theta_test = jnp.concatenate([block_ut, block_ux, block_uxx, block_u, block_bdy], axis=1)
+    return Theta_test

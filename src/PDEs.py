@@ -349,6 +349,205 @@ class Burgers(object):
         self.N_test = X_test.shape[0]
         self.extended_sol = jnp.matmul(Theta_test,temp)
 
+class BurgersErrorNonlinear(object):
+    """
+    Exact nonlinear error PDE for Burgers:
+        e_t + alpha( e e_x + e uhat_x + uhat e_x ) - nu e_xx = source_s
+    where source_s = -r = -(uhat_t + alpha uhat uhat_x - nu uhat_xx - f).
+    Boundary/initial error is typically zero.
+    """
+
+    def __init__(self, alpha=1.0, nu=0.2,
+                 uhat=None, uhat_x=None, source_s=None,
+                 bdy=None, rhs=None, domain=onp.array([[0,1],[-1,1]])):
+        self.alpha = alpha
+        self.nu = nu
+        self.uhat = uhat        # known uhat at interior points (N_domain,)
+        self.uhat_x = uhat_x    # known uhat_x at interior points (N_domain,)
+        self.source_s = source_s# known source at interior points (N_domain,)
+
+        self.bdy = bdy
+        self.rhs = rhs
+        self.domain = domain
+
+    @partial(jit, static_argnums=(0,))
+    def get_bd(self, x1, x2):
+        return self.bdy(x1, x2)
+
+    @partial(jit, static_argnums=(0,))
+    def get_rhs(self, x1, x2):
+        return self.rhs(x1, x2)
+
+    def sampled_pts(self, N_domain, N_boundary, sampled_type='random'):
+        if sampled_type == 'random':
+            X_domain, X_boundary = sampled_pts_rdm(N_domain, N_boundary, self.domain, time_dependent=True)
+        elif sampled_type == 'grid':
+            X_domain, X_boundary = sampled_pts_grid(N_domain, N_boundary, self.domain, time_dependent=True)
+
+        self.X_domain = X_domain
+        self.N_domain = X_domain.shape[0]
+        self.X_boundary = X_boundary
+        self.N_boundary = X_boundary.shape[0]
+
+        self.rhs_f = vmap(self.get_rhs)(X_domain[:,0], X_domain[:,1])
+        self.bdy_g = vmap(self.get_bd)(X_boundary[:,0], X_boundary[:,1])
+
+    def get_sampled_points(self, X_domain, X_boundary):
+        self.X_domain = X_domain
+        self.N_domain = X_domain.shape[0]
+        self.X_boundary = X_boundary
+        self.N_boundary = X_boundary.shape[0]
+
+        self.rhs_f = vmap(self.get_rhs)(X_domain[:,0], X_domain[:,1])
+        self.bdy_g = vmap(self.get_bd)(X_boundary[:,0], X_boundary[:,1])
+
+    def Gram_matrix(self, kernel='anisotropic_Gaussian', kernel_parameter=[1/3,1/20],
+                    nugget=1e-5, nugget_type='adaptive'):
+        Theta = Gram_matrix_assembly(self.X_domain, self.X_boundary,
+                                     eqn='Burgers', kernel=kernel, kernel_parameter=kernel_parameter)
+        self.nugget_type = nugget_type
+        self.nugget = nugget
+        self.kernel = kernel
+        self.kernel_parameter = kernel_parameter
+
+        if nugget_type == 'adaptive':
+            trace1 = jnp.trace(Theta[:self.N_domain, :self.N_domain])
+            trace2 = jnp.trace(Theta[self.N_domain:2*self.N_domain, self.N_domain:2*self.N_domain])
+            trace3 = jnp.trace(Theta[2*self.N_domain:3*self.N_domain, 2*self.N_domain:3*self.N_domain])
+            trace4 = jnp.trace(Theta[3*self.N_domain:, 3*self.N_domain:])
+            ratio = [trace1/trace4, trace2/trace4, trace3/trace4]
+            temp = jnp.concatenate((
+                ratio[0]*jnp.ones((1,self.N_domain)),
+                ratio[1]*jnp.ones((1,self.N_domain)),
+                ratio[2]*jnp.ones((1,self.N_domain)),
+                jnp.ones((1,self.N_domain+self.N_boundary))
+            ), axis=1)
+            self.Theta = Theta + nugget*jnp.diag(temp[0])
+        elif nugget_type == 'identity':
+            self.Theta = Theta + nugget*jnp.eye(4*self.N_domain + self.N_boundary)
+        else:
+            self.Theta = Theta
+
+    def Gram_Cholesky(self):
+        try:
+            self.L = jnp.linalg.cholesky(self.Theta)
+        except:
+            print('[Error] Cholesky factorization failed: maybe nugget is too small!')
+            sys.exit()
+
+    @partial(jit, static_argnums=(0,))
+    def loss(self, z):
+        """
+        Unknowns at interior points:
+            v0 = e
+            v2 = e_x
+            v3 = e_xx
+        Eliminate e_t via exact nonlinear error PDE:
+            e_t = nu e_xx + source_s - alpha( e e_x + e uhat_x + uhat e_x )
+        """
+        v0 = z[:self.N_domain]
+        v2 = z[self.N_domain:2*self.N_domain]
+        v3 = z[2*self.N_domain:]
+
+        # e_t predicted by exact nonlinear PDE
+        v1_pred = (self.nu * v3
+                   + self.source_s
+                   - self.alpha * (v0*v2 + v0*self.uhat_x + self.uhat*v2))
+
+        vv = jnp.append(v1_pred, v2)
+        vv = jnp.append(vv, v3)
+        vv = jnp.append(vv, v0)
+        vv = jnp.append(vv, self.bdy_g)
+
+        temp = jnp.linalg.solve(self.L, vv)
+        return jnp.dot(temp, temp)
+
+    @partial(jit, static_argnums=(0,))
+    def grad_loss(self, z):
+        return grad(self.loss)(z)
+
+    @partial(jit, static_argnums=(0,))
+    def Hessian_GN(self, z):
+        """
+        GN Hessian using Jacobian of vv wrt z.
+
+        v1_pred = nu v3 + s - alpha( v0*v2 + v0*uhat_x + uhat*v2 )
+
+        dv1/dv0 = -alpha*(v2 + uhat_x)
+        dv1/dv2 = -alpha*(v0 + uhat)
+        dv1/dv3 = nu
+        """
+        v0 = z[:self.N_domain]
+        v2 = z[self.N_domain:2*self.N_domain]
+
+        d1_dv0 = -(self.alpha) * (v2 + self.uhat_x)
+        d1_dv2 = -(self.alpha) * (v0 + self.uhat)
+
+        mtx = jnp.zeros((4*self.N_domain + self.N_boundary, 3*self.N_domain))
+
+        mtx1 = jnp.concatenate((
+            jnp.diag(d1_dv0),
+            jnp.diag(d1_dv2),
+            self.nu * jnp.eye(self.N_domain)
+        ), axis=1)
+
+        mtx = mtx.at[0:self.N_domain, :].set(mtx1)
+        mtx = mtx.at[self.N_domain:2*self.N_domain, self.N_domain:2*self.N_domain].set(jnp.eye(self.N_domain))
+        mtx = mtx.at[2*self.N_domain:3*self.N_domain, 2*self.N_domain:3*self.N_domain].set(jnp.eye(self.N_domain))
+        mtx = mtx.at[3*self.N_domain:4*self.N_domain, :self.N_domain].set(jnp.eye(self.N_domain))
+
+        ss = jnp.linalg.solve(self.L, mtx)
+        return 2*jnp.matmul(ss.T, ss)
+
+    def GN_method(self, max_iter=10, step_size=1, initial_sol='rdm', print_hist=True):
+        if initial_sol == 'rdm':
+            sol = random.normal(0.0, 1.0, (3*self.N_domain))
+        self.init_sol = sol
+
+        loss_hist = []
+        loss_now = self.loss(sol)
+        if jnp.isnan(loss_now):
+            print('[Error] Loss is nan: maybe nugget is too small!')
+        loss_hist.append(loss_now)
+
+        if print_hist:
+            print('iter = 0', 'Loss =', loss_now)
+
+        for iter_step in range(1, max_iter+1):
+            temp = jnp.linalg.solve(self.Hessian_GN(sol), self.grad_loss(sol))
+            sol = sol - step_size * temp
+            loss_now = self.loss(sol)
+            if jnp.isnan(loss_now):
+                print('[Error] Loss is nan: maybe nugget is too small!')
+            loss_hist.append(loss_now)
+            if print_hist:
+                print('iter = ', iter_step, 'Gauss-Newton step size =', step_size, ' Loss = ', loss_now)
+
+        self.max_iter = max_iter
+        self.step_size = step_size
+        self.loss_hist = loss_hist
+
+        v0 = sol[:self.N_domain]
+        v2 = sol[self.N_domain:2*self.N_domain]
+        v3 = sol[2*self.N_domain:]
+
+        v1_pred = (self.nu * v3
+                   + self.source_s
+                   - self.alpha * (v0*v2 + v0*self.uhat_x + self.uhat*v2))
+
+        sol_vec = jnp.concatenate((v1_pred, v2, v3, v0, self.bdy_g), axis=0)
+        self.sol_vec = sol_vec
+        self.sol_sampled_pts = v0
+
+    def extend_sol(self, X_test):
+        Theta_test = construct_Theta_test(X_test, self.X_domain, self.X_boundary,
+                                          eqn='Burgers', kernel=self.kernel,
+                                          kernel_parameter=self.kernel_parameter)
+        temp = jnp.linalg.solve(self.L.T, jnp.linalg.solve(self.L, self.sol_vec))
+        self.X_test = X_test
+        self.N_test = X_test.shape[0]
+        self.extended_sol = jnp.matmul(Theta_test, temp)
+
 class Eikonal(object):
     def __init__(self, eps = 3, bdy =None, rhs=None, domain=onp.array([[0,1],[0,1]])):
         # default -|\nabla u|^2 = f + eps* \Delta u
