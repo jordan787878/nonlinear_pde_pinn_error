@@ -1,4 +1,12 @@
-# NonlinearPDEs_GPsolver
+# Learn the error of PINN-based PDE solver for Nonlinear PDE
+The project is based on the following NonlinearPDEs_GPsolver
+
+We have implemented the error learning for the 1D Burger PDE:
+- To train the sol & error networks for Burger PDE: python main_Burgers1d_error.py --save_uhat trained_models/uhat.npz --save_ehat trained_models/ehat.npz
+- To see the results with pre-trained models: python main_Burgers1d_error.py --load_uhat trained_models/uhat.npz --load_ehat trained_models/ehat.npz
+
+
+## NonlinearPDEs_GPsolver
 Code for the paper [Solving and Learning Nonlinear PDEs with Gaussian Processes](https://arxiv.org/abs/2103.12959) Solvers with the flavor of automation in scientific machine learning: a general framework for PDEs and inverse problems in science.
 
 
@@ -43,7 +51,3 @@ In addition, folder `reference_solver` contains several classical solvers for th
   publisher={Elsevier}
 }
 ```
-
-### Learning Error 
-- To train the sol & error networks for Burger PDE: python main_Burgers1d_error.py --save_uhat trained_models/uhat.npz --save_ehat trained_models/ehat.npz
-- To see the results with pre-trained models: python main_Burgers1d_error.py --load_uhat trained_models/uhat.npz --load_ehat trained_models/ehat.npz
