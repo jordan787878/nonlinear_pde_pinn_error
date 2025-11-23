@@ -16,6 +16,9 @@
 #   python main_Burgers1d_error.py --show_figure True
 
 import argparse
+import os
+
+os.makedirs("figs", exist_ok=True)
 
 import jax
 import jax.numpy as jnp
@@ -422,7 +425,7 @@ if cfg.show_figure:
     levels_u = 50
 
     fig_u, axes_u = plt.subplots(
-        1, 2, figsize=(12, 4.5),
+        1, 2, figsize=(12, 6),
         sharex=True, sharey=True,
         constrained_layout=True
     )
@@ -443,6 +446,7 @@ if cfg.show_figure:
     axes_u[1].set_xlabel("t")
 
     fig_u.colorbar(cu1, ax=axes_u, shrink=0.95, pad=0.02)
+    fig_u.savefig("figs/u_true_vs_uhat.png", dpi=300, bbox_inches="tight")
 
     # ============================================================
     # (B) Compare e_true vs e_hat with shared colorbar (your code)
@@ -454,7 +458,7 @@ if cfg.show_figure:
     levels = 50
 
     fig, axes = plt.subplots(
-        1, 2, figsize=(12, 4.5),
+        1, 2, figsize=(12, 6),
         sharex=True, sharey=True,
         constrained_layout=True
     )
@@ -468,6 +472,7 @@ if cfg.show_figure:
     axes[1].set_xlabel("t")
 
     fig.colorbar(c1, ax=axes, shrink=0.95, pad=0.02)
+    fig.savefig("figs/e_true_vs_e_hat.png", dpi=300, bbox_inches="tight")
 
     # ============================================================
     # (C) Parity plot
@@ -499,7 +504,7 @@ if cfg.show_figure:
 
     # --- 3 by 2 layout ---
     nrows, ncols = 2, 3
-    fig, axes = plt.subplots(nrows, ncols, constrained_layout=True)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12, 6), constrained_layout=True)
 
     for k, t_sel in enumerate(times_to_plot):
         r, c = divmod(k, ncols)   # k -> (row, col)
@@ -526,5 +531,6 @@ if cfg.show_figure:
     # one legend for the whole figure
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.98, 0.98))
+    plt.savefig("figs/error_time_slices.png", dpi=300, bbox_inches="tight")
 
     plt.show()

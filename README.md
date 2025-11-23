@@ -5,6 +5,20 @@ We have implemented the error learning for the 1D Burger PDE:
 - To train the sol & error networks for Burger PDE: python main_Burgers1d_error.py --save_uhat trained_models/uhat.npz --save_ehat trained_models/ehat.npz
 - To see the results with pre-trained models: python main_Burgers1d_error.py --load_uhat trained_models/uhat.npz --load_ehat trained_models/ehat.npz
 
+## Results
+
+**True vs Learned Burgers solution**
+
+![u_true vs u_hat](figs/u_true_vs_uhat.png)
+
+**True vs Learned error**
+
+![e_true vs e_hat](figs/e_true_vs_e_hat.png)
+
+**Error time slices**
+
+![error time slices plot](figs/error_time_slices.png)
+
 
 ## NonlinearPDEs_GPsolver
 Code for the paper [Solving and Learning Nonlinear PDEs with Gaussian Processes](https://arxiv.org/abs/2103.12959) Solvers with the flavor of automation in scientific machine learning: a general framework for PDEs and inverse problems in science.
